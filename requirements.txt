@@ -1,6 +1,0 @@
-flask
-yfinance
-numpy
-scipy
-requests
-apscheduler
