@@ -1,439 +1,533 @@
-#!/usr/bin/env python3
-"""
-AURELIAN OPTIONS ORACLE v1.0
-AI-Powered Options Analysis & Strategy Builder
-"""
-
+from flask import Flask, render_template_string, jsonify
 import os
-import json
-import math
-import random
-import requests
-import datetime
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
-from enum import Enum
+from options_oracle import OptionsOracle, UNDERLYINGS
 
-import yfinance as yf
-import numpy as np
-from scipy.stats import norm
+app = Flask(__name__)
 
-# ============ CONFIGURATION ============
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+oracle = OptionsOracle()
 
-# NSE Options Symbols
-UNDERLYINGS = {
-    "NIFTY": {"symbol": "^NSEI", "lot_size": 50, "strike_gap": 50},
-    "BANKNIFTY": {"symbol": "^NSEBANK", "lot_size": 25, "strike_gap": 100},
-    "FINNIFTY": {"symbol": "NIFTY_FIN.NS", "lot_size": 40, "strike_gap": 50},
-}
+# ============ STUNNING HTML DASHBOARD ============
 
-RISK_FREE_RATE = 0.06
-
-# ============ DATA CLASSES ============
-
-class OptionType(Enum):
-    CALL = "CE"
-    PUT = "PE"
-
-@dataclass
-class OptionGreeks:
-    delta: float
-    gamma: float
-    theta: float
-    vega: float
-    iv: float
-
-@dataclass
-class OptionContract:
-    strike: float
-    expiry: str
-    option_type: OptionType
-    underlying: str
-    spot: float
-    premium: float
-    greeks: OptionGreeks
-    volume: int
-    oi: int
-
-# ============ GREEKS CALCULATOR ============
-
-class GreeksCalculator:
-    """Black-Scholes Greeks calculator."""
-    
-    @staticmethod
-    def calculate_d1(S: float, K: float, T: float, r: float, sigma: float) -> float:
-        if sigma == 0 or T == 0:
-            return 0
-        return (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-    
-    @staticmethod
-    def calculate_d2(d1: float, sigma: float, T: float) -> float:
-        return d1 - sigma * math.sqrt(T)
-    
-    def calculate_greeks(self, S: float, K: float, T: float, r: float, sigma: float, 
-                         option_type: OptionType) -> OptionGreeks:
-        if T <= 0 or sigma <= 0:
-            return OptionGreeks(0, 0, 0, 0, sigma)
+DASHBOARD_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Aurelian Options Oracle | Claude AI-Powered Options Intelligence</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            background: #050508; 
+            color: #e0e0e0;
+        }
         
-        d1 = self.calculate_d1(S, K, T, r, sigma)
+        /* HERO SECTION */
+        .hero {
+            background: linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 50%, #0a1a2e 100%);
+            padding: 60px 20px;
+            text-align: center;
+            border-bottom: 3px solid #00d4ff;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle, rgba(0,212,255,0.1) 0%, transparent 70%);
+            animation: rotate 20s linear infinite;
+        }
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .hero h1 {
+            font-size: 3.5em;
+            background: linear-gradient(90deg, #00d4ff, #7b2dff, #ff2d7b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            position: relative;
+        }
+        .hero .subtitle {
+            color: #888;
+            font-size: 1.2em;
+            margin-top: 10px;
+        }
+        .hero .badge {
+            display: inline-block;
+            background: rgba(0,212,255,0.2);
+            border: 1px solid #00d4ff;
+            color: #00d4ff;
+            padding: 8px 20px;
+            border-radius: 20px;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
         
-        if option_type == OptionType.CALL:
-            delta = norm.cdf(d1)
-        else:
-            delta = norm.cdf(d1) - 1
+        /* METRICS BAR */
+        .metrics {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            padding: 30px;
+            background: #0a0a1a;
+            border-bottom: 1px solid #1a1a3e;
+        }
+        .metric-box {
+            text-align: center;
+            padding: 20px 40px;
+            background: #111;
+            border-radius: 15px;
+            border: 1px solid #222;
+            min-width: 150px;
+        }
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+        .metric-label {
+            color: #888;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
         
-        gamma = norm.pdf(d1) / (S * sigma * math.sqrt(T))
+        /* MAIN GRID */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            padding: 30px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
         
-        if option_type == OptionType.CALL:
-            theta = (-S * norm.pdf(d1) * sigma / (2 * math.sqrt(T)) - 
-                     r * K * math.exp(-r * T) * norm.cdf(self.calculate_d2(d1, sigma, T))) / 365
-        else:
-            theta = (-S * norm.pdf(d1) * sigma / (2 * math.sqrt(T)) + 
-                     r * K * math.exp(-r * T) * norm.cdf(-self.calculate_d2(d1, sigma, T))) / 365
+        /* PANELS */
+        .panel {
+            background: #0f0f1a;
+            border: 1px solid #1a1a3e;
+            border-radius: 20px;
+            padding: 25px;
+        }
+        .panel h2 {
+            color: #00d4ff;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
         
-        vega = S * norm.pdf(d1) * math.sqrt(T) / 100
+        /* OPTIONS CHAIN TABLE */
+        .chain-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .chain-table th {
+            background: #1a1a3e;
+            padding: 12px;
+            text-align: center;
+            color: #888;
+            font-size: 0.85em;
+        }
+        .chain-table td {
+            padding: 10px;
+            text-align: center;
+            border-bottom: 1px solid #1a1a3e;
+        }
+        .chain-table tr:hover {
+            background: #1a1a2e;
+        }
+        .call-side { color: #00ff88; }
+        .put-side { color: #ff4444; }
+        .strike-col { 
+            background: #1a1a3e; 
+            font-weight: bold;
+            color: #ffd700;
+        }
         
-        return OptionGreeks(
-            delta=round(delta, 4),
-            gamma=round(gamma, 6),
-            theta=round(theta, 4),
-            vega=round(vega, 4),
-            iv=round(sigma * 100, 2)
-        )
-
-# ============ OPTIONS DATA FETCHER ============
-
-class OptionsDataFetcher:
-    """Fetch options chain data."""
+        /* GREEKS DISPLAY */
+        .greeks-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+        .greek-box {
+            background: #111;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid #222;
+        }
+        .greek-value {
+            font-size: 1.8em;
+            font-weight: bold;
+        }
+        .greek-label {
+            color: #888;
+            font-size: 0.85em;
+            margin-top: 5px;
+        }
+        
+        /* STRATEGY CARDS */
+        .strategy-card {
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 15px;
+            padding: 20px;
+            margin: 15px 0;
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+        .strategy-card:hover {
+            transform: translateX(10px);
+            border-color: #00d4ff;
+        }
+        .strategy-name {
+            color: #ffd700;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        .strategy-desc {
+            color: #888;
+            font-size: 0.9em;
+            margin: 5px 0;
+        }
+        .strategy-metrics {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+        }
+        .strategy-metric {
+            background: #1a1a2e;
+            padding: 8px 15px;
+            border-radius: 8px;
+            font-size: 0.85em;
+        }
+        
+        /* P&L CHART */
+        .pnl-chart {
+            height: 200px;
+            background: #111;
+            border-radius: 12px;
+            padding: 15px;
+            position: relative;
+        }
+        .pnl-bar {
+            position: absolute;
+            bottom: 0;
+            width: 60px;
+            background: linear-gradient(to top, #00ff88, #00d4ff);
+            border-radius: 5px 5px 0 0;
+            transition: height 0.5s;
+        }
+        .pnl-bar.negative {
+            background: linear-gradient(to top, #ff4444, #ff8844);
+        }
+        
+        /* AI SUGGESTION BOX */
+        .ai-box {
+            background: linear-gradient(135deg, #1a0a2e, #0a1a2e);
+            border: 2px solid #7b2dff;
+            border-radius: 20px;
+            padding: 30px;
+            margin: 30px;
+            position: relative;
+        }
+        .ai-box::before {
+            content: '🤖';
+            position: absolute;
+            top: -20px;
+            left: 30px;
+            background: #7b2dff;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.2em;
+        }
+        .ai-content {
+            margin-top: 20px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+        
+        /* UNDERLYING SELECTOR */
+        .selector {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            padding: 20px;
+            background: #0a0a1a;
+        }
+        .selector-btn {
+            background: #1a1a3e;
+            border: 2px solid transparent;
+            color: #fff;
+            padding: 12px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.2s;
+        }
+        .selector-btn:hover, .selector-btn.active {
+            border-color: #00d4ff;
+            background: rgba(0,212,255,0.1);
+        }
+        
+        /* FOOTER */
+        .footer {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            border-top: 1px solid #1a1a3e;
+        }
+    </style>
+</head>
+<body>
+    <!-- HERO -->
+    <div class="hero">
+        <h1>🔮 AURELIAN OPTIONS ORACLE</h1>
+        <p class="subtitle">Claude AI-Powered Options Intelligence & Strategy Builder</p>
+        <div class="badge">⚡ Real-Time Greeks | 🤖 Claude AI Strategies | 📊 P&L Simulator</div>
+    </div>
     
-    def __init__(self):
-        self.greeks_calc = GreeksCalculator()
+    <!-- UNDERLYING SELECTOR -->
+    <div class="selector">
+        <button class="selector-btn active" onclick="loadUnderlying('NIFTY')">NIFTY</button>
+        <button class="selector-btn" onclick="loadUnderlying('BANKNIFTY')">BANKNIFTY</button>
+        <button class="selector-btn" onclick="loadUnderlying('FINNIFTY')">FINNIFTY</button>
+    </div>
     
-    def get_underlying_price(self, symbol: str) -> Optional[float]:
-        try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1d")
-            if not hist.empty:
-                return float(hist['Close'].iloc[-1])
-            return None
-        except:
-            return None
+    <!-- METRICS -->
+    <div class="metrics">
+        <div class="metric-box">
+            <div class="metric-value" id="spotPrice">--</div>
+            <div class="metric-label">Spot Price</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-value" id="ivRank">--</div>
+            <div class="metric-label">IV Rank</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-value" id="ivPercentile">--</div>
+            <div class="metric-label">IV Percentile</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-value" id="trend">--</div>
+            <div class="metric-label">Market Trend</div>
+        </div>
+    </div>
     
-    def get_options_chain(self, symbol: str, underlying_name: str) -> List[OptionContract]:
-        try:
-            ticker = yf.Ticker(symbol)
-            expiries = ticker.options
-            if not expiries:
-                return []
+    <!-- MAIN GRID -->
+    <div class="main-grid">
+        <!-- OPTIONS CHAIN -->
+        <div class="panel">
+            <h2>📊 Options Chain</h2>
+            <table class="chain-table" id="optionsChain">
+                <tr>
+                    <th>CALL OI</th>
+                    <th>CALL IV</th>
+                    <th>CALL LTP</th>
+                    <th class="strike-col">STRIKE</th>
+                    <th>PUT LTP</th>
+                    <th>PUT IV</th>
+                    <th>PUT OI</th>
+                </tr>
+            </table>
+        </div>
+        
+        <!-- GREEKS -->
+        <div class="panel">
+            <h2>📈 ATM Greeks</h2>
+            <div class="greeks-grid" id="greeksGrid">
+                <div class="greek-box">
+                    <div class="greek-value" style="color: #00ff88;" id="delta">--</div>
+                    <div class="greek-label">Delta</div>
+                </div>
+                <div class="greek-box">
+                    <div class="greek-value" style="color: #ffd700;" id="gamma">--</div>
+                    <div class="greek-label">Gamma</div>
+                </div>
+                <div class="greek-box">
+                    <div class="greek-value" style="color: #ff8844;" id="theta">--</div>
+                    <div class="greek-label">Theta</div>
+                </div>
+                <div class="greek-box">
+                    <div class="greek-value" style="color: #8844ff;" id="vega">--</div>
+                    <div class="greek-label">Vega</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- STRATEGIES -->
+        <div class="panel">
+            <h2>🎯 Claude AI Strategy Builder</h2>
+            <div id="strategiesList">
+                <p style="color: #888;">Loading strategies...</p>
+            </div>
+        </div>
+        
+        <!-- P&L SIMULATOR -->
+        <div class="panel">
+            <h2>💰 P&L Simulator</h2>
+            <div class="pnl-chart" id="pnlChart">
+                <p style="color: #888; text-align: center; padding-top: 80px;">Select a strategy to view P&L</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- AI SUGGESTION -->
+    <div class="ai-box">
+        <h2 style="color: #7b2dff;">🤖 Claude AI Strategy Recommendation</h2>
+        <div class="ai-content" id="aiSuggestion">
+            Loading AI analysis...
+        </div>
+    </div>
+    
+    <!-- FOOTER -->
+    <div class="footer">
+        <p>Built with Python | Flask | Claude AI (Anthropic) | Black-Scholes | Real-time NSE Data</p>
+        <p style="margin-top: 10px; color: #555;">Aurelian Academy | Grade 12 Capstone Project</p>
+    </div>
+    
+    <script>
+        let currentData = null;
+        
+        function loadUnderlying(underlying) {
+            document.querySelectorAll('.selector-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
             
-            next_expiry = expiries[0]
-            chain = ticker.option_chain(next_expiry)
+            fetch('/api/analyze/' + underlying)
+                .then(res => res.json())
+                .then(data => {
+                    currentData = data;
+                    updateDashboard(data);
+                });
+        }
+        
+        function updateDashboard(data) {
+            document.getElementById('spotPrice').textContent = '₹' + data.spot.toFixed(2);
+            document.getElementById('ivRank').textContent = data.iv_rank + '%';
+            document.getElementById('ivPercentile').textContent = data.iv_percentile + '%';
+            document.getElementById('trend').textContent = data.trend;
+            document.getElementById('trend').style.color = data.trend === 'BULLISH' ? '#00ff88' : 
+                                                           data.trend === 'BEARISH' ? '#ff4444' : '#ffd700';
             
-            spot = self.get_underlying_price(symbol)
-            if not spot:
-                return []
+            const chainTable = document.getElementById('optionsChain');
+            chainTable.innerHTML = `
+                <tr>
+                    <th>CALL OI</th>
+                    <th>CALL IV</th>
+                    <th>CALL LTP</th>
+                    <th class="strike-col">STRIKE</th>
+                    <th>PUT LTP</th>
+                    <th>PUT IV</th>
+                    <th>PUT OI</th>
+                </tr>
+            `;
             
-            contracts = []
-            T = (datetime.datetime.strptime(next_expiry, "%Y-%m-%d") - 
-                 datetime.datetime.now()).days / 365
-            
-            for _, row in chain.calls.iterrows():
-                if row['strike'] > spot * 0.9 and row['strike'] < spot * 1.1:
-                    iv = row['impliedVolatility'] if not math.isnan(row['impliedVolatility']) else 0.2
-                    greeks = self.greeks_calc.calculate_greeks(spot, row['strike'], T, RISK_FREE_RATE, iv, OptionType.CALL)
+            if (data.contracts) {
+                const strikes = [...new Set(data.contracts.map(c => c.strike))].sort((a,b) => a-b);
+                strikes.forEach(strike => {
+                    const call = data.contracts.find(c => c.strike === strike && c.option_type === 'CE');
+                    const put = data.contracts.find(c => c.strike === strike && c.option_type === 'PE');
                     
-                    contracts.append(OptionContract(
-                        strike=row['strike'],
-                        expiry=next_expiry,
-                        option_type=OptionType.CALL,
-                        underlying=underlying_name,
-                        spot=spot,
-                        premium=round(row['lastPrice'], 2),
-                        greeks=greeks,
-                        volume=int(row.get('volume', 0)),
-                        oi=int(row.get('openInterest', 0))
-                    ))
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td class="call-side">${call ? call.oi : '--'}</td>
+                        <td class="call-side">${call ? call.greeks.iv + '%' : '--'}</td>
+                        <td class="call-side">₹${call ? call.premium : '--'}</td>
+                        <td class="strike-col">${strike}</td>
+                        <td class="put-side">₹${put ? put.premium : '--'}</td>
+                        <td class="put-side">${put ? put.greeks.iv + '%' : '--'}</td>
+                        <td class="put-side">${put ? put.oi : '--'}</td>
+                    `;
+                    chainTable.appendChild(row);
+                });
+            }
             
-            for _, row in chain.puts.iterrows():
-                if row['strike'] > spot * 0.9 and row['strike'] < spot * 1.1:
-                    iv = row['impliedVolatility'] if not math.isnan(row['impliedVolatility']) else 0.2
-                    greeks = self.greeks_calc.calculate_greeks(spot, row['strike'], T, RISK_FREE_RATE, iv, OptionType.PUT)
-                    
-                    contracts.append(OptionContract(
-                        strike=row['strike'],
-                        expiry=next_expiry,
-                        option_type=OptionType.PUT,
-                        underlying=underlying_name,
-                        spot=spot,
-                        premium=round(row['lastPrice'], 2),
-                        greeks=greeks,
-                        volume=int(row.get('volume', 0)),
-                        oi=int(row.get('openInterest', 0))
-                    ))
+            if (data.contracts && data.contracts.length > 0) {
+                const atm = data.contracts.reduce((prev, curr) => 
+                    Math.abs(curr.strike - data.spot) < Math.abs(prev.strike - data.spot) ? curr : prev
+                );
+                document.getElementById('delta').textContent = atm.greeks.delta;
+                document.getElementById('gamma').textContent = atm.greeks.gamma;
+                document.getElementById('theta').textContent = atm.greeks.theta;
+                document.getElementById('vega').textContent = atm.greeks.vega;
+            }
             
-            return contracts
-        except:
-            return []
-    
-    def get_iv_rank(self, symbol: str) -> Tuple[float, float]:
-        try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1y")
-            if len(hist) < 30:
-                return 50.0, 50.0
+            const strategiesList = document.getElementById('strategiesList');
+            strategiesList.innerHTML = '';
+            if (data.strategies) {
+                data.strategies.forEach((strat, idx) => {
+                    const card = document.createElement('div');
+                    card.className = 'strategy-card';
+                    card.onclick = () => showPnL(idx);
+                    card.innerHTML = `
+                        <div class="strategy-name">${strat.name}</div>
+                        <div class="strategy-desc">${strat.description}</div>
+                        <div class="strategy-metrics">
+                            <span class="strategy-metric" style="color: #00ff88;">Net: ₹${strat.net_premium}</span>
+                            <span class="strategy-metric" style="color: #ffd700;">Δ: ${strat.net_delta}</span>
+                            <span class="strategy-metric" style="color: #ff8844;">θ: ${strat.net_theta}</span>
+                        </div>
+                    `;
+                    strategiesList.appendChild(card);
+                });
+            }
             
-            log_returns = np.log(hist['Close'] / hist['Close'].shift(1))
-            hv = log_returns.std() * np.sqrt(252) * 100
-            iv_rank = min(100, max(0, random.uniform(20, 80)))
-            iv_percentile = random.uniform(30, 70)
-            
-            return round(iv_rank, 2), round(iv_percentile, 2)
-        except:
-            return 50.0, 50.0
-
-# ============ STRATEGY BUILDER ============
-
-class StrategyBuilder:
-    STRATEGIES = {
-        "Long Straddle": {
-            "description": "Buy ATM Call + Buy ATM Put",
-            "legs": [
-                {"strike_offset": 0, "type": OptionType.CALL, "action": "BUY"},
-                {"strike_offset": 0, "type": OptionType.PUT, "action": "BUY"}
-            ],
-            "market_view": "Volatile (expecting big move)",
-            "max_profit": "Unlimited",
-            "max_loss": "Premium Paid"
-        },
-        "Short Straddle": {
-            "description": "Sell ATM Call + Sell ATM Put",
-            "legs": [
-                {"strike_offset": 0, "type": OptionType.CALL, "action": "SELL"},
-                {"strike_offset": 0, "type": OptionType.PUT, "action": "SELL"}
-            ],
-            "market_view": "Range-bound (low volatility)",
-            "max_profit": "Premium Received",
-            "max_loss": "Unlimited"
-        },
-        "Iron Condor": {
-            "description": "Sell OTM Call Spread + Sell OTM Put Spread",
-            "legs": [
-                {"strike_offset": -100, "type": OptionType.PUT, "action": "BUY"},
-                {"strike_offset": -50, "type": OptionType.PUT, "action": "SELL"},
-                {"strike_offset": 50, "type": OptionType.CALL, "action": "SELL"},
-                {"strike_offset": 100, "type": OptionType.CALL, "action": "BUY"}
-            ],
-            "market_view": "Range-bound (collect premium)",
-            "max_profit": "Net Premium",
-            "max_loss": "Spread Width - Premium"
-        },
-        "Bull Call Spread": {
-            "description": "Buy ATM Call + Sell OTM Call",
-            "legs": [
-                {"strike_offset": 0, "type": OptionType.CALL, "action": "BUY"},
-                {"strike_offset": 50, "type": OptionType.CALL, "action": "SELL"}
-            ],
-            "market_view": "Moderately Bullish",
-            "max_profit": "Spread Width - Premium Paid",
-            "max_loss": "Premium Paid"
-        },
-        "Bear Put Spread": {
-            "description": "Buy ATM Put + Sell OTM Put",
-            "legs": [
-                {"strike_offset": 0, "type": OptionType.PUT, "action": "BUY"},
-                {"strike_offset": -50, "type": OptionType.PUT, "action": "SELL"}
-            ],
-            "market_view": "Moderately Bearish",
-            "max_profit": "Spread Width - Premium Paid",
-            "max_loss": "Premium Paid"
+            document.getElementById('aiSuggestion').textContent = data.ai_suggestion || 'AI analysis loading...';
         }
-    }
-    
-    def build_strategy(self, strategy_name: str, spot: float, contracts: List[OptionContract]) -> Dict:
-        if strategy_name not in self.STRATEGIES:
-            return {}
         
-        config = self.STRATEGIES[strategy_name]
-        legs = []
-        total_premium = 0
-        total_delta = 0
-        total_theta = 0
-        
-        for leg_config in config["legs"]:
-            target_strike = spot + leg_config["strike_offset"]
-            closest = min(contracts, 
-                         key=lambda x: abs(x.strike - target_strike) 
-                         if x.option_type == leg_config["type"] else float('inf'))
+        function showPnL(strategyIdx) {
+            if (!currentData || !currentData.strategies) return;
+            const strat = currentData.strategies[strategyIdx];
+            const chart = document.getElementById('pnlChart');
             
-            if closest:
-                premium = closest.premium
-                if leg_config["action"] == "SELL":
-                    premium = -premium
-                
-                legs.append({
-                    "strike": closest.strike,
-                    "type": closest.option_type.value,
-                    "action": leg_config["action"],
-                    "premium": abs(closest.premium),
-                    "delta": closest.greeks.delta * (-1 if leg_config["action"] == "SELL" else 1),
-                    "theta": closest.greeks.theta
-                })
-                
-                total_premium += premium
-                total_delta += closest.greeks.delta * (-1 if leg_config["action"] == "SELL" else 1)
-                total_theta += closest.greeks.theta
-        
-        if strategy_name in ["Long Straddle", "Short Straddle"]:
-            breakevens = [spot - abs(total_premium), spot + abs(total_premium)]
-        else:
-            breakevens = [spot * 0.95, spot * 1.05]
-        
-        return {
-            "name": strategy_name,
-            "description": config["description"],
-            "market_view": config["market_view"],
-            "legs": legs,
-            "net_premium": round(total_premium, 2),
-            "net_delta": round(total_delta, 4),
-            "net_theta": round(total_theta, 4),
-            "breakevens": [round(b, 2) for b in breakevens],
-            "max_profit": config["max_profit"],
-            "max_loss": config["max_loss"]
-        }
-
-# ============ P&L SIMULATOR ============
-
-class PnLSimulator:
-    def simulate(self, strategy: Dict, spot_range: List[float]) -> List[Dict]:
-        results = []
-        for price in spot_range:
-            pnl = 0
-            for leg in strategy["legs"]:
-                if leg["action"] == "BUY":
-                    if leg["type"] == "CE":
-                        intrinsic = max(0, price - leg["strike"])
-                    else:
-                        intrinsic = max(0, leg["strike"] - price)
-                    pnl += intrinsic - leg["premium"]
-                else:
-                    if leg["type"] == "CE":
-                        intrinsic = max(0, price - leg["strike"])
-                    else:
-                        intrinsic = max(0, leg["strike"] - price)
-                    pnl += leg["premium"] - intrinsic
+            let html = '<div style="display: flex; justify-content: space-around; align-items: flex-end; height: 100%; padding: 0 20px;">';
+            const maxPnL = Math.max(...strat.pnl_simulation.map(p => Math.abs(p.pnl)));
             
-            results.append({"spot": round(price, 2), "pnl": round(pnl, 2)})
-        return results
-
-# ============ AI STRATEGY SUGGESTOR ============
-
-class AIStrategySuggester:
-    def __init__(self):
-        self.groq_key = GROQ_API_KEY
-    
-    def suggest(self, market_data: Dict) -> str:
-        if not self.groq_key:
-            return self._fallback_suggestion(market_data)
-        
-        prompt = f"""You are an expert options trader. Analyze this market data and suggest the best option strategy.
-
-Market Data:
-- Underlying: {market_data['underlying']}
-- Spot: {market_data['spot']}
-- IV Rank: {market_data['iv_rank']}%
-- IV Percentile: {market_data['iv_percentile']}%
-- Trend: {market_data['trend']}
-
-Suggest ONE specific strategy with:
-1. Strategy name
-2. Why it fits current conditions
-3. Exact strikes to use
-4. Risk management (stop loss, target)
-
-Keep it concise and actionable."""
-
-        try:
-            response = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.groq_key}", "Content-Type": "application/json"},
-                json={"model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt}], "max_tokens": 400},
-                timeout=10
-            )
-            if response.status_code == 200:
-                return response.json()['choices'][0]['message']['content']
-            return self._fallback_suggestion(market_data)
-        except:
-            return self._fallback_suggestion(market_data)
-    
-    def _fallback_suggestion(self, market_data: Dict) -> str:
-        iv_rank = market_data.get('iv_rank', 50)
-        if iv_rank > 70:
-            return "STRATEGY: Short Straddle (IV Crush Play)\n\nRATIONALE: IV Rank is elevated (>70%). Expecting volatility contraction after event.\n\nSETUP:\n- Sell ATM Call & Put\n- Collect high premium\n- Profit if market stays range-bound\n\nRISK: Keep position small. Use 2x premium as stop loss."
-        elif iv_rank < 30:
-            return "STRATEGY: Long Straddle (Volatility Expansion)\n\nRATIONALE: IV is cheap. Expecting volatility expansion.\n\nSETUP:\n- Buy ATM Call & Put\n- Small debit, unlimited upside\n- Profit from big moves either direction\n\nRISK: Time decay works against you. Close if no move in 5 days."
-        else:
-            return "STRATEGY: Iron Condor (Range Play)\n\nRATIONALE: IV is moderate. Market likely range-bound.\n\nSETUP:\n- Sell OTM Call Spread + Put Spread\n- Collect premium in range\n- Adjust if underlying moves near short strikes\n\nRISK: Max loss = spread width - premium. Position size accordingly."
-
-# ============ MAIN ORACLE ============
-
-class OptionsOracle:
-    def __init__(self):
-        self.fetcher = OptionsDataFetcher()
-        self.strategy_builder = StrategyBuilder()
-        self.pnl_sim = PnLSimulator()
-        self.ai = AIStrategySuggester()
-    
-    def analyze(self, underlying_name: str = "NIFTY") -> Dict:
-        config = UNDERLYINGS.get(underlying_name, UNDERLYINGS["NIFTY"])
-        
-        spot = self.fetcher.get_underlying_price(config["symbol"])
-        if not spot:
-            return {"error": "Could not fetch underlying price"}
-        
-        contracts = self.fetcher.get_options_chain(config["symbol"], underlying_name)
-        iv_rank, iv_percentile = self.fetcher.get_iv_rank(config["symbol"])
-        
-        trend = "NEUTRAL"
-        if contracts:
-            call_oi = sum(c.oi for c in contracts if c.option_type == OptionType.CALL)
-            put_oi = sum(c.oi for c in contracts if c.option_type == OptionType.PUT)
-            pcr = put_oi / call_oi if call_oi > 0 else 1
-            trend = "BULLISH" if pcr < 0.8 else "BEARISH" if pcr > 1.2 else "NEUTRAL"
-        
-        strategies = []
-        for name in ["Long Straddle", "Short Straddle", "Iron Condor", "Bull Call Spread", "Bear Put Spread"]:
-            strategy = self.strategy_builder.build_strategy(name, spot, contracts)
-            if strategy:
-                spot_range = [spot * 0.85, spot * 0.9, spot * 0.95, spot, spot * 1.05, spot * 1.1, spot * 1.15]
-                strategy["pnl_simulation"] = self.pnl_sim.simulate(strategy, spot_range)
-                strategies.append(strategy)
-        
-        market_data = {
-            "underlying": underlying_name,
-            "spot": spot,
-            "iv_rank": iv_rank,
-            "iv_percentile": iv_percentile,
-            "trend": trend
+            strat.pnl_simulation.forEach(p => {
+                const height = Math.abs(p.pnl) / maxPnL * 150;
+                const isProfit = p.pnl >= 0;
+                html += `
+                    <div style="text-align: center;">
+                        <div style="font-size: 0.75em; color: #888; margin-bottom: 5px;">₹${p.pnl}</div>
+                        <div class="pnl-bar ${isProfit ? '' : 'negative'}" style="height: ${height}px; left: auto; position: relative;"></div>
+                        <div style="font-size: 0.75em; color: #888; margin-top: 5px;">${p.spot}</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            chart.innerHTML = html;
         }
-        ai_suggestion = self.ai.suggest(market_data)
         
-        return {
-            "underlying": underlying_name,
-            "spot": spot,
-            "iv_rank": iv_rank,
-            "iv_percentile": iv_percentile,
-            "trend": trend,
-            "contracts": [{"strike": c.strike, "option_type": c.option_type.value, "premium": c.premium, 
-                          "greeks": {"delta": c.greeks.delta, "gamma": c.greeks.gamma, "theta": c.greeks.theta, 
-                                    "vega": c.greeks.vega, "iv": c.greeks.iv}, "volume": c.volume, "oi": c.oi} 
-                         for c in contracts],
-            "strategies": strategies,
-            "ai_suggestion": ai_suggestion,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+        window.onload = () => {
+            fetch('/api/analyze/NIFTY')
+                .then(res => res.json())
+                .then(data => {
+                    currentData = data;
+                    updateDashboard(data);
+                });
+        };
+    </script>
+</body>
+</html>
+"""
 
-if __name__ == "__main__":
-    oracle = OptionsOracle()
-    result = oracle.analyze("NIFTY")
-    print(json.dumps(result, indent=2, default=str))
+# ============ API ROUTES ============
+
+@app.route('/')
+def dashboard():
+    return render_template_string(DASHBOARD_HTML)
+
+@app.route('/api/analyze/<underlying>')
+def analyze(underlying):
+    result = oracle.analyze(underlying.upper())
+    return jsonify(result)
+
+# ============ RUN ============
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
