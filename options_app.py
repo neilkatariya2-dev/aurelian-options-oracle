@@ -288,7 +288,7 @@ DASHBOARD_HTML = """
     <div class="hero">
         <h1>🔮 AURELIAN OPTIONS ORACLE</h1>
         <p class="subtitle">AI-Powered Options Intelligence & Strategy Builder</p>
-        <div class="badge">⚡ Real-Time Greeks | 🤖 AI Strategies | 📊 P&L Simulator</div>
+<div class="badge">⚡ Real-Time Greeks | 🤖 Claude AI Strategies | 📊 P&L Simulator</div>
     </div>
     
     <!-- UNDERLYING SELECTOR -->
