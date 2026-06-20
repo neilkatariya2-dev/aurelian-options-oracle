@@ -378,7 +378,7 @@ DASHBOARD_HTML = """
     
     <!-- AI SUGGESTION -->
     <div class="ai-box">
-        <h2 style="color: #7b2dff;">🤖 AI Strategy Recommendation</h2>
+        <h2 style="color: #7b2dff;">🤖 Claude AI Strategy Recommendation</h2>
         <div class="ai-content" id="aiSuggestion">
             Loading AI analysis...
         </div>
